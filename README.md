@@ -1,6 +1,6 @@
 # 🤖 Upgrade Scripts — TG Bot & Cabinet
 
-Скрипты для обновления [remnawave-bedolaga-telegram-bot](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot) и [bedolaga-cabinet](https://github.com/BEDOLAGA-DEV/bedolaga-cabinet) на продакшн сервере FreeNet.
+Скрипты для обновления [remnawave-bedolaga-telegram-bot](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot) и [bedolaga-cabinet](https://github.com/BEDOLAGA-DEV/bedolaga-cabinet) на продакшн сервере.
 
 ---
 
@@ -17,9 +17,9 @@
 
 ```bash
 cd /opt
-git clone https://github.com/MaksimTMB/upgrade-scripts-tg-bot-cabinet.git
-cp upgrade-scripts-tg-bot-cabinet/update-bot.sh /opt/remnawave-bot/update-bot.sh
-cp upgrade-scripts-tg-bot-cabinet/update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
+git clone https://github.com/MaksimTMB/upgrade-scripts-tg-bot-cabinet.git upgrade-scripts
+cp upgrade-scripts/update-bot.sh /opt/remnawave-bot/update-bot.sh
+cp upgrade-scripts/update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
 chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.sh
 ```
 
@@ -35,23 +35,41 @@ cd /opt/remnawave-bot && ./update-bot.sh
 cd /opt/bedolaga-cabinet && ./update-cabinet.sh
 ```
 
+При **первом запуске** `update-bot.sh` задаст несколько вопросов и сохранит конфиг в `update-bot.conf`. При последующих запусках конфиг подхватывается автоматически.
+
+Чтобы сбросить настройки и пройти настройку заново:
+```bash
+rm /opt/remnawave-bot/update-bot.conf && ./update-bot.sh
+```
+
+---
+
+## 🔄 Обновление самих скриптов
+
+Твой конфиг (`update-bot.conf`) хранится локально на сервере и **не перезаписывается** при обновлении скриптов.
+
+```bash
+cd /opt/upgrade-scripts && git pull
+cp update-bot.sh /opt/remnawave-bot/update-bot.sh
+cp update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
+chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.sh
+```
+
 ---
 
 ## ⚙️ Что делает update-bot.sh
 
-1. Получает актуальные теги с GitHub
-2. Показывает текущую и новую версию
-3. Выводит список новых миграций и изменений в `docker-compose.yml`
-4. Спрашивает подтверждение `y/N`
-5. Делает `git checkout` на новый тег
-6. Берёт `uv.lock` строго из тега (без конфликтов)
-7. Автоматически патчит `docker-compose.yml`:
-   - External volumes (`remnawave-bedolaga-telegram-bot_postgres_data` / `redis_data`)
-   - Логотип (`freenet_logo.jpg → /app/vpn_logo.png`)
-   - DNS (`8.8.8.8`, `1.1.1.1`)
-8. Регенерирует `uv.lock`
-9. Собирает образ (`docker compose build --no-cache`)
-10. Перезапускает сервисы и показывает логи
+1. При первом запуске спрашивает настройки и сохраняет в `update-bot.conf`
+2. Получает актуальные теги с GitHub
+3. Показывает текущую и новую версию
+4. Выводит список новых миграций и изменений в `docker-compose.yml`
+5. Спрашивает подтверждение `y/N`
+6. Делает `git checkout` на новый тег
+7. Берёт `uv.lock` строго из тега (без конфликтов)
+8. Применяет патчи `docker-compose.yml` из конфига (external volumes, логотип, DNS)
+9. Регенерирует `uv.lock`
+10. Собирает образ (`docker compose build --no-cache`)
+11. Перезапускает сервисы и показывает логи
 
 ## ⚙️ Что делает update-cabinet.sh
 
@@ -66,6 +84,6 @@ cd /opt/bedolaga-cabinet && ./update-cabinet.sh
 
 ## 🔒 Особенности
 
-- Скрипты **не трогают данные** — volumes с БД и Redis объявлены как `external`
-- При обновлении бота все кастомные настройки `docker-compose.yml` применяются автоматически
+- Скрипты **не трогают данные** — external volumes защищены
+- `update-bot.conf` создаётся локально на сервере и не попадает в git
 - Если версия уже актуальна — скрипт завершается без действий
