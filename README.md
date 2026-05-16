@@ -18,9 +18,9 @@
 ```bash
 cd /opt
 git clone https://github.com/MaksimTMB/upgrade-scripts-tg-bot-cabinet.git upgrade-scripts
-cp upgrade-scripts/update-bot.sh /opt/remnawave-bot/update-bot.sh
-cp upgrade-scripts/update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
-chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.sh
+sudo cp upgrade-scripts/update-bot.sh /opt/remnawave-bot/update-bot.sh
+sudo cp upgrade-scripts/update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
+sudo chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.sh
 ```
 
 ---
@@ -28,62 +28,108 @@ chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.s
 ## ▶️ Использование
 
 ```bash
-# Обновить бот
-cd /opt/remnawave-bot && ./update-bot.sh
+# Обновить бот до последнего тега
+cd /opt/remnawave-bot && sudo ./update-bot.sh
+
+# Обновить бот до конкретного тега (двухходовка / возврат назад)
+cd /opt/remnawave-bot && sudo ./update-bot.sh v3.55.0
+
+# Без интерактивного y/N (для cron / автоматизации)
+cd /opt/remnawave-bot && sudo AUTO_CONFIRM=y ./update-bot.sh
 
 # Обновить кабинет
-cd /opt/bedolaga-cabinet && ./update-cabinet.sh
+cd /opt/bedolaga-cabinet && sudo ./update-cabinet.sh
+cd /opt/bedolaga-cabinet && sudo ./update-cabinet.sh v1.52.0   # конкретный тег
 ```
 
-При **первом запуске** `update-bot.sh` задаст несколько вопросов и сохранит конфиг в `update-bot.conf`. При последующих запусках конфиг подхватывается автоматически.
+**Запускать из-под root / через sudo.** В `/opt/remnawave-bot` и `/opt/bedolaga-cabinet`
+рабочие репозитории и compose принадлежат root — без sudo `git` упадёт с
+"detected dubious ownership", а `docker compose` — с "permission denied on
+docker.sock".
 
-Чтобы сбросить настройки и пройти настройку заново:
+### Аргументы и переменные окружения
+
+| | |
+|--|--|
+| `$1` | Целевой тег (опционально). По умолчанию — последний по `sort -V`. Если тег не найден локально — ошибка с подсказкой. |
+| `AUTO_CONFIRM=y` | Пропустить интерактивное подтверждение `y/N`. Полезно через несколько SSH-прыжков, где TTY не пробрасывается. |
+
+---
+
+## ⚙️ Что делает update-bot.sh
+
+1. Снимает снапшот текущего `docker-compose.yml` в `/opt/backups/auto-<TS>/` (на случай отката).
+2. Получает теги с GitHub.
+3. Выбирает целевую версию: `$1` или последний по `sort -V`.
+4. Показывает список новых Alembic-миграций и upstream-изменений `docker-compose.yml`.
+5. Подтверждение `y/N` (можно обойти через `AUTO_CONFIRM=y`).
+6. Снимает локальные правки (`git reset --hard` + `git clean -fd -e locales -e locales/`) — кастомные `locales/` бэкапятся в `$BACKUP_DIR` перед сбросом.
+7. `git checkout <tag>`, забирает `uv.lock` строго из тега.
+8. **Идемпотентно** патчит `docker-compose.yml` (повторный запуск ничего не дублирует):
+   - `postgres_data` / `redis_data` → `external: true, name: remnawave-bedolaga-telegram-bot_*`
+   - `vpn_logo.png` → `freenet_logo.jpg`
+   - добавляет `dns: 8.8.8.8 / 1.1.1.1` в сервис bot (если ещё нет)
+9. Регенерирует `uv.lock` через `docker run python:3.13-slim`.
+10. `docker compose build --no-cache` → `down` → `up -d`.
+11. Хвост логов 20с и `docker compose ps`.
+
+## ⚙️ Что делает update-cabinet.sh
+
+1. Снапшот `docker-compose.yml` в `/opt/backups/auto-<TS>/`.
+2. Получает теги, выбирает целевую версию.
+3. Показывает diff `docker-compose.yml`.
+4. Подтверждение `y/N` (или `AUTO_CONFIRM=y`).
+5. `git reset --hard` + `git clean -fd` + `git checkout <tag>`.
+6. `build --no-cache` → `down` → `up -d`.
+7. Хвост логов 15с и `docker compose ps`.
+
+---
+
+## 🔒 Безопасность данных
+
+- **External volumes** для бота (`postgres_data`, `redis_data`) — данные не пересоздаются и не удаляются при пересборке.
+- Перед каждым запуском compose снапшотится в `/opt/backups/auto-<TS>/` — можно откатить вручную.
+- **Перед мажорными апдейтами рекомендуется отдельный `pg_dump`**:
+  ```bash
+  sudo docker exec remnawave_bot_db pg_dump -U remnawave_user -d remnawave_bot \
+      --clean --if-exists > /opt/backups/$(date +%F)/remnawave_bot.sql
+  ```
+- Если уже на последнем теге — скрипт завершается без действий.
+
+---
+
+## ⚠️ Предполётный чек-лист
+
+1. **Свободное место на диске** — `df -h /`. Сборка нового образа бота забирает ~1 GB, кабинет ~100 MB, build-кэш Docker растёт быстро. Перед апдейтом полезно:
+   ```bash
+   sudo docker builder prune -af
+   sudo docker image prune -af
+   ```
+2. **Бэкап БД** для бота — см. выше.
+3. Среди новых миграций бывают `UNIQUE`-индексы — могут упасть на боевых дубликатах. Просмотри `=== Alembic migrations ===` в выводе скрипта перед `y`.
+
+---
+
+## 🔄 Откат
+
 ```bash
-rm /opt/remnawave-bot/update-bot.conf && ./update-bot.sh
+# 1. Бот — на предыдущий тег
+cd /opt/remnawave-bot && sudo ./update-bot.sh v3.55.0   # вернуть на 3.55
+
+# 2. Если миграции уже прошли и нужен полный rollback БД — восстановить pg_dump:
+sudo docker exec -i remnawave_bot_db psql -U remnawave_user -d remnawave_bot < /opt/backups/<TS>/remnawave_bot.sql
+
+# 3. Откатить compose-патч (если нужно)
+sudo cp /opt/backups/auto-<TS>/bot-docker-compose.yml.before /opt/remnawave-bot/docker-compose.yml
 ```
 
 ---
 
 ## 🔄 Обновление самих скриптов
 
-Твой конфиг (`update-bot.conf`) хранится локально на сервере и **не перезаписывается** при обновлении скриптов.
-
 ```bash
-cd /opt/upgrade-scripts && git pull
-cp update-bot.sh /opt/remnawave-bot/update-bot.sh
-cp update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
-chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.sh
+cd /opt/upgrade-scripts && sudo git pull
+sudo cp update-bot.sh /opt/remnawave-bot/update-bot.sh
+sudo cp update-cabinet.sh /opt/bedolaga-cabinet/update-cabinet.sh
+sudo chmod +x /opt/remnawave-bot/update-bot.sh /opt/bedolaga-cabinet/update-cabinet.sh
 ```
-
----
-
-## ⚙️ Что делает update-bot.sh
-
-1. При первом запуске спрашивает настройки и сохраняет в `update-bot.conf`
-2. Получает актуальные теги с GitHub
-3. Показывает текущую и новую версию
-4. Выводит список новых миграций и изменений в `docker-compose.yml`
-5. Спрашивает подтверждение `y/N`
-6. Делает `git checkout` на новый тег
-7. Берёт `uv.lock` строго из тега (без конфликтов)
-8. Применяет патчи `docker-compose.yml` из конфига (external volumes, логотип, DNS)
-9. Регенерирует `uv.lock`
-10. Собирает образ (`docker compose build --no-cache`)
-11. Перезапускает сервисы и показывает логи
-
-## ⚙️ Что делает update-cabinet.sh
-
-1. Получает актуальные теги с GitHub
-2. Показывает текущую и новую версию
-3. Спрашивает подтверждение `y/N`
-4. Сбрасывает локальные изменения и делает `git checkout` на новый тег
-5. Собирает образ (`docker compose build --no-cache`)
-6. Перезапускает сервисы и показывает логи
-
----
-
-## 🔒 Особенности
-
-- Скрипты **не трогают данные** — external volumes защищены
-- `update-bot.conf` создаётся локально на сервере и не попадает в git
-- Если версия уже актуальна — скрипт завершается без действий
