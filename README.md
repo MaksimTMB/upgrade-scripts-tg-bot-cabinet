@@ -1,6 +1,12 @@
 # 🤖 Upgrade Scripts — TG Bot & Cabinet
 
+[![Release](https://img.shields.io/github/v/release/MaksimTMB/upgrade-scripts-tg-bot-cabinet?sort=semver)](https://github.com/MaksimTMB/upgrade-scripts-tg-bot-cabinet/releases)
+[![Changelog](https://img.shields.io/badge/CHANGELOG-md-blue)](CHANGELOG.md)
+
 Скрипты для обновления [remnawave-bedolaga-telegram-bot](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot) и [bedolaga-cabinet](https://github.com/BEDOLAGA-DEV/bedolaga-cabinet) на продакшн сервере.
+
+> **⚠ v2.0.0 breaking** — теперь скрипты обязательно запускать через `sudo`
+> (репы в `/opt/` принадлежат root). См. [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
