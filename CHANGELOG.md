@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] — 2026-06-01
+
+Закрывает два рецидива, из-за которых апдейт «не работал», — теперь команды
+`sudo update-bot` / `sudo update-cabinet` самодостаточны и не требуют ручных
+действий до/после.
+
+### Fixed
+
+- **`update-cabinet.sh`: кастомный `listen [::]:80;` в `nginx.conf` больше не
+  теряется.** Раньше `git reset --hard` / `checkout` затирали IPv6-listen на
+  каждом апдейте → `cabinet_frontend` уходил в `(unhealthy)` (busybox-wget
+  healthcheck бьётся в `::1`). Теперь скрипт бэкапит `nginx.conf` (шаг 0) и
+  идемпотентно ре-инжектит строку после checkout, до сборки образа
+  (шаг 3b, `sed` с сохранением отступа, guard по `grep`).
+
+### Added
+
+- **Авто-чистка диска перед `--no-cache` сборкой в обоих скриптах** (шаг 6b
+  бота / 3c кабинета). Главная историческая причина падений 16 мая 2026 —
+  диск `/` забит build-кэшем (10+ GB) → postgres `No space left on device`,
+  стек полу-обновлён. Теперь перед сборкой: `docker builder prune -af` +
+  `docker image prune -f` (только reclaimable: build cache + dangling-слои;
+  запущенные контейнеры, тома и тегированные образы не трогаются). Если после
+  чистки на `/` < 3 GB — скрипт аккуратно прерывается ДО сборки с понятным
+  сообщением, а не роняет стек на полпути.
+
+### Notes
+
+- Деплой на 192.168.1.63: единственная точка запуска — симлинки
+  `/usr/local/bin/update-bot` и `update-cabinet` → этот каталог. Устаревшая
+  per-repo копия `/opt/remnawave-bot/update-bot.sh` удалена (2026-06-01).
+- Идеальное решение для nginx.conf — мёрж PR `fix/nginx-ipv6-healthcheck` в
+  `BEDOLAGA-DEV/bedolaga-cabinet`; до тех пор self-heal в скрипте делает его
+  необязательным.
+
 ## [2.0.0] — 2026-05-16
 
 Первый версионированный релиз. Скрипты переписаны так, чтобы пережили

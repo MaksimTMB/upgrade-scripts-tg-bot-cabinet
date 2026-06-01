@@ -156,6 +156,27 @@ echo ""
 echo "=== Regenerating uv.lock ==="
 sudo docker run --rm -v "$BOT_DIR:/app" -w /app python:3.13-slim sh -c "pip install uv -q && uv lock"
 
+# ── 6b. Чистим docker-мусор перед сборкой ────────────────────────────────────
+# Главная историческая причина "апдейт сломался" (16 мая 2026) — диск / забит
+# на 100% build-кэшем от --no-cache ребилдов (10+ GB) → postgres падал с
+# 'No space left on device', стек оставался полу-обновлённым. Чистим ТОЛЬКО
+# reclaimable: build cache + dangling-слои. Запущенные контейнеры, тома и
+# тегированные образы не трогаем.
+echo ""
+echo "=== Freeing disk: docker build cache + dangling images ==="
+df -h / | tail -1
+sudo docker builder prune -af || true
+sudo docker image prune -f || true
+echo "After prune:"
+df -h / | tail -1
+AVAIL_KB=$(df --output=avail / | tail -1 | tr -d ' ')
+if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 3145728 ]; then
+  echo "ERROR: < 3 GB свободно на / после чистки ($((AVAIL_KB/1024)) MB)."
+  echo "Сборка прервана до того, как --no-cache добьёт диск (postgres упал бы с"
+  echo "'No space left'). Освободи место (docker system df) и повтори."
+  exit 1
+fi
+
 # ── 7. Собираем образ ─────────────────────────────────────────────────────────
 echo ""
 echo "=== Building image ==="
