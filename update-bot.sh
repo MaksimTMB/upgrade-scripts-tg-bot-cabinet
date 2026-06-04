@@ -63,6 +63,38 @@ echo ""
 echo "=== Saving rollback point ==="
 echo "$CURRENT" | sudo tee "$BACKUP_DIR/bot-rollback-tag.txt" >/dev/null
 
+# ── 3a. Снимок БД ДО миграций ────────────────────────────────────────────────
+# Новый тег может нести разрушительную Alembic-миграцию ИЛИ startup-чистку, которую
+# compose-снапшот не покрывает (напр. v3.59.0 — фоновый дедуп тарифных подписок,
+# удаляющий строки). Миграции/чистки применяются ботом при `up -d`, поэтому
+# pg_dump снимаем СЕЙЧАС — пока старый стек ещё поднят и БД на старой схеме. Дамп
+# кладём в тот же $BACKUP_DIR. Если postgres недоступен или дамп не снялся —
+# прерываемся ДО изменений (миграции без бэкапа БД не применяем).
+DB_CONTAINER="remnawave_bot_db"
+DB_NAME="remnawave_bot"
+DB_USER="remnawave_user"
+DB_DUMP="$BACKUP_DIR/bot-db-${DB_NAME}.sql.gz"
+echo "=== DB snapshot before migrations ==="
+if sudo docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER"; then
+  # pg_dump → gzip → файл. Реальный код pg_dump берём из PIPESTATUS[0] (без
+  # pipefail хвост pipe маскирует его). Sanity: валидный gzip-дамп заведомо >1 KB.
+  sudo docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" -d "$DB_NAME" --clean --if-exists \
+    | gzip | sudo tee "$DB_DUMP" >/dev/null
+  RC=${PIPESTATUS[0]}
+  DUMP_SZ=$(sudo stat -c%s "$DB_DUMP" 2>/dev/null || echo 0)
+  if [ "$RC" -ne 0 ] || [ "$DUMP_SZ" -lt 1024 ]; then
+    echo "ERROR: pg_dump не отработал (rc=$RC, size=${DUMP_SZ}B) — прерываю ДО применения миграций."
+    echo "Проверь контейнер $DB_CONTAINER и повтори (бэкап БД перед миграциями обязателен)."
+    sudo rm -f "$DB_DUMP"
+    exit 1
+  fi
+  echo "  DB dump: $DB_DUMP ($(sudo du -h "$DB_DUMP" | cut -f1))"
+  echo "  Restore: gunzip -c $DB_DUMP | sudo docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME"
+else
+  echo "  WARNING: контейнер $DB_CONTAINER не запущен — пропускаю DB-снапшот."
+  echo "  (свежая установка? миграции применятся без точки отката БД.)"
+fi
+
 echo "=== Checking out $LATEST ==="
 # locales/ — кастомные переводы, не в апстриме (whitelisted в .gitignore).
 # Бэкапим перед сбросом, потом возвращаем на место.
@@ -191,6 +223,7 @@ $DC up -d
 echo ""
 echo "=== Done! Bot updated $CURRENT → $LATEST ==="
 echo "Rollback point: $BACKUP_DIR"
+[ -f "$DB_DUMP" ] && echo "  DB pre-migration dump: $DB_DUMP"
 echo ""
 echo "=== Tailing logs for 20s (Ctrl+C to exit early) ==="
 timeout 20 $DC logs -f bot || true

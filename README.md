@@ -95,11 +95,12 @@ docker.sock".
 
 - **External volumes** для бота (`postgres_data`, `redis_data`) — данные не пересоздаются и не удаляются при пересборке.
 - Перед каждым запуском compose снапшотится в `/opt/backups/auto-<TS>/` — можно откатить вручную.
-- **Перед мажорными апдейтами рекомендуется отдельный `pg_dump`**:
-  ```bash
-  sudo docker exec remnawave_bot_db pg_dump -U remnawave_user -d remnawave_bot \
-      --clean --if-exists > /opt/backups/$(date +%F)/remnawave_bot.sql
-  ```
+- **Авто-`pg_dump` БД бота ДО миграций (v2.2.0, шаг 3a).** После подтверждения, пока
+  старый стек ещё поднят, скрипт снимает `pg_dump --clean --if-exists`, сжимает в
+  `/opt/backups/auto-<TS>/bot-db-remnawave_bot.sql.gz` и проверяет, что дамп не пустой.
+  Если postgres недоступен или дамп не снялся — апдейт прерывается ДО применения
+  миграций. Закрывает класс рисков «разрушительная миграция / startup-чистка»
+  (напр. дедуп подписок в боте v3.59.0). Ручной дамп больше не нужен.
 - Если уже на последнем теге — скрипт завершается без действий.
 
 ---
@@ -111,7 +112,7 @@ docker.sock".
    sudo docker builder prune -af
    sudo docker image prune -af
    ```
-2. **Бэкап БД** для бота — см. выше.
+2. **Бэкап БД** для бота снимается скриптом автоматически (шаг 3a) — отдельно делать не нужно.
 3. Среди новых миграций бывают `UNIQUE`-индексы — могут упасть на боевых дубликатах. Просмотри `=== Alembic migrations ===` в выводе скрипта перед `y`.
 
 ---
@@ -122,8 +123,9 @@ docker.sock".
 # 1. Бот — на предыдущий тег
 cd /opt/remnawave-bot && sudo ./update-bot.sh v3.55.0   # вернуть на 3.55
 
-# 2. Если миграции уже прошли и нужен полный rollback БД — восстановить pg_dump:
-sudo docker exec -i remnawave_bot_db psql -U remnawave_user -d remnawave_bot < /opt/backups/<TS>/remnawave_bot.sql
+# 2. Если миграции уже прошли и нужен полный rollback БД — восстановить авто-дамп:
+gunzip -c /opt/backups/auto-<TS>/bot-db-remnawave_bot.sql.gz \
+  | sudo docker exec -i remnawave_bot_db psql -U remnawave_user -d remnawave_bot
 
 # 3. Откатить compose-патч (если нужно)
 sudo cp /opt/backups/auto-<TS>/bot-docker-compose.yml.before /opt/remnawave-bot/docker-compose.yml

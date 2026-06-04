@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-06-04
+
+### Added
+
+- **`update-bot.sh`: авто-`pg_dump` БД ДО применения миграций (шаг 3a).** После
+  подтверждения апдейта, пока старый стек ещё поднят и БД на старой схеме, скрипт
+  снимает `pg_dump --clean --if-exists` из контейнера `remnawave_bot_db`, сжимает в
+  `/opt/backups/auto-<TS>/bot-db-remnawave_bot.sql.gz` и проверяет, что дамп не
+  пустой (>1 KB). Если postgres не запущен или `pg_dump` упал — апдейт **прерывается
+  ДО** checkout/build/up, чтобы миграции не применились без точки отката.
+  - Мотивация: бот `v3.59.0` принёс фоновый startup-сервис дедупа тарифных
+    подписок (`subscription_dedup_service`), удаляющий строки из БД, — класс
+    изменений, который compose-снапшот не покрывает. На текущем проде он сработал
+    вхолостую (0 дублей), но впредь любой такой апдейт получает дамп для отката в
+    одну команду:
+    `gunzip -c <dump> | sudo docker exec -i remnawave_bot_db psql -U remnawave_user -d remnawave_bot`.
+  - Путь дампа печатается в финальной сводке рядом с `Rollback point`.
+
+### Notes
+
+- Дамп берётся после интерактивного `y/N` (или `AUTO_CONFIRM`), поэтому отказ от
+  апдейта не плодит лишних дампов. Свежая установка без запущенного
+  `remnawave_bot_db` не падает — снапшот пропускается с предупреждением.
+- `update-cabinet.sh` не трогали: у кабинета нет БД/миграций.
+
 ## [2.1.0] — 2026-06-01
 
 Закрывает два рецидива, из-за которых апдейт «не работал», — теперь команды
